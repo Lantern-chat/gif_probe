@@ -1,0 +1,19 @@
+[package]
+name = "gif_probe"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[patch.crates-io]
+argh = { git = "https://github.com/novacrazy/argh" }
+
+[dependencies]
+argh = { version = "0.1", default-features = false, features = ["help"] }
+gif = "0.13"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+strip = true
+debug = false

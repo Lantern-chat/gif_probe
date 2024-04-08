@@ -17,11 +17,14 @@ Any file that fails to process should be considered invalid.
 
 Usage:
 ```
-gif_probe path/file.gif
+gif_probe
     [-l max_duration_in_ms]
     [-d max_pixels]
     [-m max_memory_in_bytes]
+     -i path/file.gif
 ```
+
+Or pass `-i -` to read from stdin, through this currently does not work in Windows terminals.
 
 Example output:
 ```json

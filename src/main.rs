@@ -15,11 +15,14 @@
  *
  * Usage:
  * ```
- * gif_probe path/file.gif
+ * gif_probe
  *     [-l max_duration_in_ms]
  *     [-d max_pixels]
  *     [-m max_memory_in_bytes]
+ *      -i path/file.gif
  * ```
+ *
+ * Or pass `-i -` to read from stdin, through this currently does not work in Windows terminals.
  *
  * Example output:
  * ```json
@@ -34,7 +37,7 @@
  * ```
  */
 
-use std::{num::NonZeroU64, path::PathBuf};
+use std::{fs::File, io::BufReader, num::NonZeroU64, path::PathBuf};
 
 use gif::{ColorOutput, DecodeOptions, DisposalMethod, MemoryLimit};
 
@@ -50,9 +53,6 @@ pub struct GifProbe {
 ///
 #[derive(argh::FromArgs)]
 pub struct Arguments {
-    #[argh(positional)]
-    pub path: PathBuf,
-
     /// stop processing after this duration is reached
     #[argh(option, short = 'j')]
     pub max_duration: Option<u64>,
@@ -64,12 +64,41 @@ pub struct Arguments {
     /// don't decode if the decoder would allocate more than this (in bytes)
     #[argh(option, short = 'm')]
     pub max_memory: Option<NonZeroU64>,
+
+    /// path to the GIF file, or `-` to read from stdin
+    #[argh(option, short = 'i')]
+    pub input: PathBuf,
 }
 
 fn main() {
     let args: Arguments = argh::from_env();
 
-    let f = std::fs::OpenOptions::new().read(true).write(false).open(&args.path).expect("To open the file");
+    let f = BufReader::new(match args.input.as_path() {
+        path if path.as_os_str() == "-" => {
+            // try to unbuffer the buffered stream here for windows and unix
+            #[cfg(windows)]
+            let file = unsafe {
+                use std::os::windows::io::{AsRawHandle, FromRawHandle};
+                File::from_raw_handle(std::io::stdin().as_raw_handle())
+            };
+
+            #[cfg(unix)]
+            let file = unsafe {
+                use std::os::fd::{AsRawFd, FromRawFd};
+                File::from_raw_fd(std::io::stdin().as_raw_fd())
+            };
+
+            // can't unbuffer, will be double-buffered, oh well
+            #[cfg(not(any(windows, unix)))]
+            let file = Box::new(std::io::stdin().lock()) as Box<dyn std::io::Read>;
+
+            file
+        }
+        #[cfg(any(windows, unix))]
+        path => File::open(path).expect("To open the file"),
+        #[cfg(not(any(windows, unix)))]
+        path => Box::new(File::open(path).expect("To open the file")) as Box<dyn std::io::Read>,
+    });
 
     let mut opts = DecodeOptions::new();
 

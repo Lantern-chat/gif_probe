@@ -5,7 +5,7 @@
  *
  * For the common GIF, there are only two ways to obtain real transparency. It can either have transparent
  * pixels in the first frame, or clears parts of the image using the `Background` dispose method after a frame.
- * Technically, the `background` dispose method is supposed to fill in the frame with the background color,
+ * Technically, the `Background` dispose method is supposed to fill in the frame with the background color,
  * but everyone ignores that.
  *
  * Therefore, it is not necessary to actually accumulate and dispose pixels values.
@@ -38,7 +38,6 @@ use std::{num::NonZeroU64, path::PathBuf};
 
 use gif::{ColorOutput, DecodeOptions, DisposalMethod, MemoryLimit};
 
-#[derive(Default, Debug)]
 pub struct GifProbe {
     pub alpha: bool,
     pub max_colors: u16,
@@ -79,7 +78,7 @@ fn main() {
     let mut opts = DecodeOptions::new();
 
     opts.set_memory_limit(MemoryLimit::Bytes(
-        // 20 MiB or user-specified
+        // user-specified or 20 MiB
         args.max_memory
             .unwrap_or(NonZeroU64::new(1024 * 1024 * 20).unwrap()),
     ));
@@ -93,7 +92,10 @@ fn main() {
     let mut probe = GifProbe {
         width: d.width(),
         height: d.height(),
-        ..GifProbe::default()
+        alpha: false,
+        max_colors: 0,
+        duration: 0,
+        frames: 0,
     };
 
     if let Some(m) = args.max_pixels {

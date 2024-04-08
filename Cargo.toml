@@ -3,7 +3,7 @@ name = "gif_probe"
 version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
-author = "novacrazy <novacrazy@gmail.com>"
+authors = ["novacrazy <novacrazy@gmail.com>"]
 
 [patch.crates-io]
 argh = { git = "https://github.com/novacrazy/argh" }

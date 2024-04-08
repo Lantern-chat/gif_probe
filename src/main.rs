@@ -87,11 +87,11 @@ fn main() {
     opts.allow_unknown_blocks(false);
     opts.check_lzw_end_code(false);
 
-    let mut d = opts.read_info(f).expect("To read the GIF");
+    let mut decoder = opts.read_info(f).expect("To read the GIF");
 
     let mut probe = GifProbe {
-        width: d.width(),
-        height: d.height(),
+        width: decoder.width(),
+        height: decoder.height(),
         alpha: false,
         max_colors: 0,
         duration: 0,
@@ -104,11 +104,11 @@ fn main() {
         }
     }
 
-    if let Some(p) = d.global_palette() {
+    if let Some(p) = decoder.global_palette() {
         probe.max_colors = u16::try_from(p.len() / 3).unwrap();
     }
 
-    if let Some(frame) = d.read_next_frame().expect("to read the first frame") {
+    if let Some(frame) = decoder.read_next_frame().expect("to read the first frame") {
         if let Some(tr) = frame.transparent {
             if frame.buffer.contains(&tr) {
                 probe.alpha = true;
@@ -124,7 +124,7 @@ fn main() {
 
     let max_duration = args.max_duration.unwrap_or(u64::MAX);
 
-    while let Some(frame) = d.next_frame_info().expect("to read the frame") {
+    while let Some(frame) = decoder.next_frame_info().expect("to read the frame") {
         if frame.dispose == DisposalMethod::Background && frame.width > 0 && frame.height > 0 {
             probe.alpha = true;
         }

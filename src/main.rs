@@ -69,23 +69,20 @@ pub struct Arguments {
 fn main() {
     let args: Arguments = argh::from_env();
 
-    let f = std::fs::OpenOptions::new()
-        .read(true)
-        .write(false)
-        .open(&args.path)
-        .expect("To open the file");
+    let f = std::fs::OpenOptions::new().read(true).write(false).open(&args.path).expect("To open the file");
 
     let mut opts = DecodeOptions::new();
 
-    opts.set_memory_limit(MemoryLimit::Bytes(
-        // user-specified or 20 MiB
-        args.max_memory
-            .unwrap_or(NonZeroU64::new(1024 * 1024 * 20).unwrap()),
-    ));
     opts.set_color_output(ColorOutput::Indexed);
     opts.check_frame_consistency(true);
     opts.allow_unknown_blocks(false);
     opts.check_lzw_end_code(false);
+    opts.set_memory_limit(MemoryLimit::Bytes(
+        // user-specified or 20 MiB
+        args.max_memory
+            // SAFETY: Obviously non-zero
+            .unwrap_or(unsafe { NonZeroU64::new_unchecked(1024 * 1024 * 20) }),
+    ));
 
     let mut decoder = opts.read_info(f).expect("To read the GIF");
 
@@ -98,41 +95,33 @@ fn main() {
         frames: 0,
     };
 
-    if let Some(m) = args.max_pixels {
-        if m < (probe.width as u64 * probe.height as u64) {
-            panic!("Image too large!");
-        }
+    if matches!(args.max_pixels, Some(m) if m < (probe.width as u64 * probe.height as u64)) {
+        panic!("Image too large!");
     }
 
     if let Some(p) = decoder.global_palette() {
-        probe.max_colors = u16::try_from(p.len() / 3).unwrap();
+        probe.max_colors = u16::try_from(p.len() / 3).expect("colors to u16");
     }
 
     if let Some(frame) = decoder.read_next_frame().expect("to read the first frame") {
-        if let Some(tr) = frame.transparent {
-            if frame.buffer.contains(&tr) {
-                probe.alpha = true;
-            }
-        }
-
+        probe.alpha |= matches!(frame.transparent, Some(tr) if frame.buffer.contains(&tr));
         probe.frames += 1;
         probe.duration += frame.delay as u64;
+
         if let Some(ref p) = frame.palette {
-            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).unwrap());
+            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).expect("colors to u16"));
         }
     }
 
     let max_duration = args.max_duration.unwrap_or(u64::MAX);
 
     while let Some(frame) = decoder.next_frame_info().expect("to read the frame") {
-        if frame.dispose == DisposalMethod::Background && frame.width > 0 && frame.height > 0 {
-            probe.alpha = true;
-        }
-
+        probe.alpha |= frame.dispose == DisposalMethod::Background && frame.width > 0 && frame.height > 0;
         probe.frames += 1;
         probe.duration += frame.delay as u64;
+
         if let Some(ref p) = frame.palette {
-            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).unwrap());
+            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).expect("colors to u16"));
         }
 
         if probe.duration >= max_duration {

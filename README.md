@@ -24,7 +24,17 @@ gif_probe
      -i path/file.gif
 ```
 
-Or pass `-i -` to read from stdin, through this currently does not work in Windows terminals.
+Or pass `-i -` to read from stdin, which can be useful when spawning as a subprocess.
+
+Example usage in PowerShell 7+:
+
+```powershell
+# Using `gif_probe` directly:
+gif_probe -i "path/file.gif"
+
+# Using `Get-Content` to read the file as a byte stream. `-AsByteStream -Raw` is required.
+Get-Content -Path "path/file.gif" -AsByteStream -Raw | gif_probe -i - | ConvertFrom-Json
+```
 
 Example output:
 ```json

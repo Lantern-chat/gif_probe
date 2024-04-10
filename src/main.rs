@@ -22,7 +22,17 @@
  *      -i path/file.gif
  * ```
  *
- * Or pass `-i -` to read from stdin, through this currently does not work in Windows terminals.
+ * Or pass `-i -` to read from stdin, which can be useful when spawning as a subprocess.
+ *
+ * Example usage in PowerShell 7+:
+ *
+ * ```powershell
+ * # Using `gif_probe` directly:
+ * gif_probe -i "path/file.gif"
+ *
+ * # Using `Get-Content` to read the file as a byte stream. `-AsByteStream -Raw` is required.
+ * Get-Content -Path "path/file.gif" -AsByteStream -Raw | gif_probe -i - | ConvertFrom-Json
+ * ```
  *
  * Example output:
  * ```json
@@ -73,29 +83,26 @@ pub struct Arguments {
 fn main() {
     let args: Arguments = argh::from_env();
 
-    let f = BufReader::new(match args.input.as_path() {
-        path if path.as_os_str() == "-" => {
-            // try to unbuffer the buffered stream here for windows and unix
-            #[cfg(windows)]
-            let file = unsafe {
-                use std::os::windows::io::{AsRawHandle, FromRawHandle};
-                File::from_raw_handle(std::io::stdin().as_raw_handle())
-            };
+    // try to unbuffer stdin on windows and unix, otherwise use a boxed trait object
+    let reader = BufReader::new(match args.input.as_path() {
+        #[cfg(windows)]
+        path if path.as_os_str() == "-" => unsafe {
+            use std::os::windows::io::{AsRawHandle, FromRawHandle};
+            File::from_raw_handle(std::io::stdin().as_raw_handle())
+        },
 
-            #[cfg(unix)]
-            let file = unsafe {
-                use std::os::fd::{AsRawFd, FromRawFd};
-                File::from_raw_fd(std::io::stdin().as_raw_fd())
-            };
+        #[cfg(unix)]
+        path if path.as_os_str() == "-" => unsafe {
+            use std::os::fd::{AsRawFd, FromRawFd};
+            File::from_raw_fd(std::io::stdin().as_raw_fd())
+        },
 
-            // can't unbuffer, will be double-buffered, oh well
-            #[cfg(not(any(windows, unix)))]
-            let file = Box::new(std::io::stdin().lock()) as Box<dyn std::io::Read>;
-
-            file
-        }
-        #[cfg(any(windows, unix))]
+        #[cfg(any(windows, unix))] // unboxed file, no need for dyn trait
         path => File::open(path).expect("To open the file"),
+
+        #[cfg(not(any(windows, unix)))] // can't unbuffer, will be double-buffered, oh well
+        path if path.as_os_str() == "-" => Box::new(std::io::stdin().lock()) as Box<dyn std::io::Read>,
+
         #[cfg(not(any(windows, unix)))]
         path => Box::new(File::open(path).expect("To open the file")) as Box<dyn std::io::Read>,
     });
@@ -113,7 +120,14 @@ fn main() {
             .unwrap_or(unsafe { NonZeroU64::new_unchecked(1024 * 1024 * 20) }),
     ));
 
-    let mut decoder = opts.read_info(f).expect("To read the GIF");
+    // if in the future `gif` requires `Seek` it'll silently become incompatible with stdin,
+    // so assert that `read_info` can work with only `Read`
+    #[inline(always)]
+    fn assert_read_only<R: std::io::Read>(reader: R, opts: DecodeOptions) -> gif::Decoder<R> {
+        opts.read_info(reader).expect("To read the GIF")
+    }
+
+    let mut decoder = assert_read_only(reader, opts);
 
     let mut probe = GifProbe {
         width: decoder.width(),

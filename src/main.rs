@@ -47,7 +47,12 @@
  * ```
  */
 
-use std::{fs::File, io::BufReader, num::NonZeroU64, path::PathBuf};
+use std::{
+    fs::File,
+    io::BufReader,
+    num::NonZeroU64,
+    path::{Path, PathBuf},
+};
 
 use gif::{ColorOutput, DecodeOptions, DisposalMethod, MemoryLimit};
 
@@ -60,7 +65,8 @@ pub struct GifProbe {
     pub height: u16,
 }
 
-///
+/// Probes a GIF to detect if it actually has transparent pixels,
+/// and accumulates misc data while we're at it.
 #[derive(argh::FromArgs)]
 pub struct Arguments {
     /// stop processing after this duration is reached
@@ -80,11 +86,28 @@ pub struct Arguments {
     pub input: PathBuf,
 }
 
+trait ResultExt<T> {
+    fn expect_path(self, path: &Path, msg: &str) -> T;
+}
+
+impl<T, E> ResultExt<T> for Result<T, E>
+where
+    E: std::fmt::Debug,
+{
+    #[inline(always)]
+    #[track_caller]
+    fn expect_path(self, path: &Path, msg: &str) -> T {
+        self.unwrap_or_else(|e| panic!("Error {msg} for file: {}: {e:?}", path.display()))
+    }
+}
+
 fn main() {
     let args: Arguments = argh::from_env();
 
+    let path = args.input.as_path();
+
     // try to unbuffer stdin on windows and unix, otherwise use a boxed trait object
-    let reader = BufReader::new(match args.input.as_path() {
+    let reader = BufReader::new(match path {
         #[cfg(windows)]
         path if path.as_os_str() == "-" => unsafe {
             use std::os::windows::io::{AsRawHandle, FromRawHandle};
@@ -98,13 +121,13 @@ fn main() {
         },
 
         #[cfg(any(windows, unix))] // unboxed file, no need for dyn trait
-        path => File::open(path).expect("To open the file"),
+        path => File::open(path).expect_path(path, "opening file"),
 
         #[cfg(not(any(windows, unix)))] // can't unbuffer, will be double-buffered, oh well
         path if path.as_os_str() == "-" => Box::new(std::io::stdin().lock()) as Box<dyn std::io::Read>,
 
         #[cfg(not(any(windows, unix)))]
-        path => Box::new(File::open(path).expect("To open the file")) as Box<dyn std::io::Read>,
+        path => Box::new(File::open(path).expect_path(path, "opening file")) as Box<dyn std::io::Read>,
     });
 
     let mut opts = DecodeOptions::new();
@@ -123,11 +146,11 @@ fn main() {
     // if in the future `gif` requires `Seek` it'll silently become incompatible with stdin,
     // so assert that `read_info` can work with only `Read`
     #[inline(always)]
-    fn assert_read_only<R: std::io::Read>(reader: R, opts: DecodeOptions) -> gif::Decoder<R> {
-        opts.read_info(reader).expect("To read the GIF")
+    fn assert_read_only<R: std::io::Read>(path: &Path, reader: R, opts: DecodeOptions) -> gif::Decoder<R> {
+        opts.read_info(reader).expect_path(path, "reading the GIF")
     }
 
-    let mut decoder = assert_read_only(reader, opts);
+    let mut decoder = assert_read_only(path, reader, opts);
 
     let mut probe = GifProbe {
         width: decoder.width(),
@@ -143,28 +166,30 @@ fn main() {
     }
 
     if let Some(p) = decoder.global_palette() {
-        probe.max_colors = u16::try_from(p.len() / 3).expect("colors to u16");
+        probe.max_colors = u16::try_from(p.len() / 3).expect_path(path, "converting color count");
     }
 
-    if let Some(frame) = decoder.read_next_frame().expect("to read the first frame") {
+    if let Some(frame) = decoder.read_next_frame().expect_path(path, "reading the first frame") {
         probe.alpha |= matches!(frame.transparent, Some(tr) if frame.buffer.contains(&tr));
         probe.frames += 1;
         probe.duration += frame.delay as u64;
 
         if let Some(ref p) = frame.palette {
-            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).expect("colors to u16"));
+            probe.max_colors =
+                probe.max_colors.max(u16::try_from(p.len() / 3).expect_path(path, "converting color count"));
         }
     }
 
     let max_duration = args.max_duration.unwrap_or(u64::MAX);
 
-    while let Some(frame) = decoder.next_frame_info().expect("to read the frame") {
+    while let Some(frame) = decoder.next_frame_info().expect_path(path, "reading a frame") {
         probe.alpha |= frame.dispose == DisposalMethod::Background && frame.width > 0 && frame.height > 0;
         probe.frames += 1;
         probe.duration += frame.delay as u64;
 
         if let Some(ref p) = frame.palette {
-            probe.max_colors = probe.max_colors.max(u16::try_from(p.len() / 3).expect("colors to u16"));
+            probe.max_colors =
+                probe.max_colors.max(u16::try_from(p.len() / 3).expect_path(path, "converting color count"));
         }
 
         if probe.duration >= max_duration {
